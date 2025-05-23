@@ -1,6 +1,6 @@
 # 💼 JOB_PORTAL_BACKEND
 
-Welcome to the **backend of SARAM – a modern Job Portal** built with Django and Django REST Framework.
+Welcome to the **backend of worknest – a modern Job Portal** built with Django and Django REST Framework.
 
 This project powers a complete job platform that connects **employers** and **candidates** with real-time communication, secure payments, and smart interview scheduling.
 
