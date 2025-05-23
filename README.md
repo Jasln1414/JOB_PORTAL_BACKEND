@@ -1,31 +1,50 @@
-"# JOB_PORTAL_BACKEND" 
+# 💼 JOB_PORTAL_BACKEND
 
+Welcome to the **backend of SARAM – a modern Job Portal** built with Django and Django REST Framework.
 
+This project powers a complete job platform that connects **employers** and **candidates** with real-time communication, secure payments, and smart interview scheduling.
 
-# JOB_PORTAL_BACKEND
+---
 
-This is the backend of a Job Portal project built using Django and Django REST Framework.
+## 🚀 Features
 
-## Features
+### 👥 Authentication
+- Employer & Candidate Signup/Login with token-based authentication
 
-- Employer and Candidate Registration/Login
-- Job Listings and Applications
-- Subscription Plans (with Razorpay)
-- Real-time Chat using Django Channels
+### 📝 Job Management
+- Employers can post jobs (based on subscription)
+- Candidates can browse & apply to job listings
 
-## Technologies Used
+### 💬 Real-Time Chat
+- Built with **Django Channels** & WebSockets
+- Instant messaging between employers and candidates
 
-- Python
-- Django
-- Django REST Framework
-- PostgreSQL
-- Redis & WebSockets
-- Razorpay
+### 📅 Interview Scheduling
+- Employers can schedule interviews
+- Candidates receive **email notifications** and **real-time alerts**
+- Automated updates on interview status using background tasks
 
-## Setup Instructions
+### 💳 Subscription System
+- Employers purchase plans via **Razorpay**
+- Job post limits based on the active plan
+- Background checks for plan expiry using **Celery**
 
-1. Clone the repository:
-   ```bas
+---
+
+## ⚙️ Tech Stack
+
+- **Backend:** Django, Django REST Framework
+- **Database:** PostgreSQL
+- **Real-time:** Django Channels + Redis
+- **Payments:** Razorpay Integration
+- **Background Tasks:** Celery + Redis
+- **Auth:** JWT Token Authentication
+
+---
+
+## 📂 Setup Instructions
+
+1. **Clone the repository**
+   ```bash
    git clone https://github.com/Jasln1414/JOB_PORTAL_BACKEND.git
    cd JOB_PORTAL_BACKEND
-
