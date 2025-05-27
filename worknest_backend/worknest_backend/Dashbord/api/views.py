@@ -535,6 +535,24 @@ class SubscriptionPlanListView(APIView):
         serializer = SubscriptionPlanSerializer(plans, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
+# class SubscriptionPlanDeleteView(APIView):
+#     """
+#     Delete a subscription plan by ID.
+#     Requires admin authentication.
+#     """
+#     permission_classes = [IsAdminUser]
+
+#     def delete(self, request, pk):
+#         try:
+#             plan = SubscriptionPlan.objects.get(pk=pk)
+#             plan.delete()
+#             return Response(status=status.HTTP_204_NO_CONTENT)
+#         except SubscriptionPlan.DoesNotExist:
+#             return Response({"error": "Subscription plan not found"}, status=status.HTTP_404_NOT_FOUND)
+
+
+
+
 class SubscriptionPlanDeleteView(APIView):
     """
     Delete a subscription plan by ID.
@@ -545,7 +563,17 @@ class SubscriptionPlanDeleteView(APIView):
     def delete(self, request, pk):
         try:
             plan = SubscriptionPlan.objects.get(pk=pk)
+            # Check for active subscriptions using status field
+            active_subscriptions = EmployerSubscription.objects.filter(plan=plan, status='active').count()
+            if active_subscriptions > 0:
+                logger.warning(f"Cannot delete plan pk={pk} due to {active_subscriptions} active subscriptions")
+                return Response(
+                    {"error": f"Cannot delete plan with {active_subscriptions} active subscriptions"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
             plan.delete()
+            logger.debug(f"Plan pk={pk} deleted successfully")
             return Response(status=status.HTTP_204_NO_CONTENT)
         except SubscriptionPlan.DoesNotExist:
+            logger.warning(f"Plan with pk={pk} not found")
             return Response({"error": "Subscription plan not found"}, status=status.HTTP_404_NOT_FOUND)

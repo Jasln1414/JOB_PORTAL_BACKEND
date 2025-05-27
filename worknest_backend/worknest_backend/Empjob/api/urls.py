@@ -1,8 +1,8 @@
 # Empjob/api/urls.py
 from django.urls import path
 
-from payment.views import RenewSubscription
-from .views import JobAutocompleteView, SavedJobsView, SavejobStatus, CheckJobSaveStatus
+#from payment.views import RenewSubscription
+from .views import  SavedJobsView, SavejobStatus, CheckJobSaveStatus
 from . import views
 from django.conf import settings
 from django.conf.urls.static import static
@@ -50,8 +50,7 @@ urlpatterns = [
 
     path('job-usage/', views.JobUsageView.as_view(), name='job-usage'),
    
-    path('subscription/renew/', RenewSubscription.as_view(), name='create-subscription'),
+    # path('subscription/renew/', RenewSubscription.as_view(), name='create-subscription'),
 ]+ static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
 
     
-

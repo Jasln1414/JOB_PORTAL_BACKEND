@@ -34,7 +34,7 @@ class InterviewSheduleSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'candidate', 'employer', 'job', 'date',
             'active', 'selected', 'status', 'employer_name',
-            'apply_date', 'candidate_name', 'job_title', 'job_info'
+            'apply_date', 'candidate_name', 'job_title', 'job_info','attended'
         ]
 
     def get_job_info(self, obj):
@@ -70,3 +70,5 @@ class InterviewSheduleSerializer(serializers.ModelSerializer):
     
     def get_job_title(self, obj):
         return obj.job.title if obj.job else ''
+    
+

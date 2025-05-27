@@ -320,6 +320,17 @@ CSRF_COOKIE_HTTPONLY = False
 CSRF_USE_SESSIONS = False
 CSRF_COOKIE_SECURE = False
 
+
+# CELERY_BEAT_SCHEDULE = {
+#     'update-interview-statuses': {
+#         'task': 'Interview.tasks.update_interview_statuses',
+#         'schedule': 60.0,  # Run every minute
+#     },
+# }
+
+
+
+
 CHANNEL_LAYERS = {
     'default': {
         'BACKEND': 'channels_redis.core.RedisChannelLayer',

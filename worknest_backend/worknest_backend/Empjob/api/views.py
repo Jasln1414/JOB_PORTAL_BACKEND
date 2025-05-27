@@ -218,49 +218,61 @@ class PostJob(APIView):
 
 
 
-
 class JobUsageView(APIView):
-    """API view to retrieve job usage statistics for an employer."""
-
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        """Handle GET request to retrieve job usage statistics.
-
-        Args:
-            request: HTTP request object.
-
-        Returns:
-            Response: JSON response with usage statistics or error details.
-        """
-        logger.info("JobUsageView endpoint hit!")
+        logger.info(f"JobUsageView endpoint hit! User ID: {request.user.id}")
         try:
             user = request.user
-            if not hasattr(user, 'user_type') or user.user_type != 'employer':
-                return Response(
-                    {"error": "Only employers can access this information"},
-                    status=status.HTTP_403_FORBIDDEN
-                )
+            logger.info(f"User: {user.id}, user_type: {getattr(user, 'user_type', 'N/A')}")
+            
+            if not hasattr(user, 'user_type') or user.user_type.lower() != 'employer':
+                logger.error("User is not an employer")
+                return Response({"error": "Only employers can access this information"}, status=status.HTTP_403_FORBIDDEN)
 
-            employer = Employer.objects.get(user=user)
+            employers = Employer.objects.filter(user=user)
+            if not employers.exists():
+                logger.error(f"No employer profiles found for user_id: {user.id}")
+                return Response({"error": "Employer profile not found"}, status=status.HTTP_404_NOT_FOUND)
+
+            employer_ids = [e.id for e in employers]
+
+            # Get active subscription
             subscription = EmployerSubscription.objects.filter(
-                employer=employer,
-                status="active",
+                employer__in=employers,
+                status__iexact="active",
                 end_date__gt=timezone.now()
             ).order_by('-start_date').first()
-            subscription_status = subscription.status if subscription else None
-            existing_subscription_id = subscription.id if subscription else None
-            
 
-            job_count = Jobs.objects.filter(employer=employer,
-                                           active=True).count()
-            
+            # Determine if active subscription is near expiry
+            is_near_expiry = False
+            if subscription:
+                days_until_expiry = (subscription.end_date - timezone.now()).days
+                is_near_expiry = days_until_expiry <= 7  # Show renewal button if less than or equal to 7 days remaining
+
+            # Get renewal subscription (regardless of active state)
+            renewal_subscription = EmployerSubscription.objects.filter(
+                employer__in=employers,
+                status__in=["expired", "cancelled", "inactive"]
+            ).order_by('-end_date').first()
+
+            # Include renewal subscription details only if necessary
+            if not subscription or is_near_expiry:
+                renewal_subscription_id = renewal_subscription.razorpay_subscription_id if renewal_subscription else None
+                renewal_subscription_plan = renewal_subscription.plan.name if renewal_subscription else None
+                renewal_subscription_end_date = renewal_subscription.end_date.isoformat() if renewal_subscription else None
+            else:
+                renewal_subscription_id = None
+                renewal_subscription_plan = None
+                renewal_subscription_end_date = None
+
+            job_count = Jobs.objects.filter(employer__in=employers, active=True).count()
 
             if subscription:
                 subscribed_job_count = subscription.subscribed_job
                 job_limit = subscription.plan.job_limit
-                remaining_jobs = ("Unlimited" if job_limit == 9999
-                                  else max(0, job_limit - subscribed_job_count))
+                remaining_jobs = "Unlimited" if job_limit == 9999 else max(0, job_limit - subscribed_job_count)
                 usage_stats = {
                     "job_count": job_count,
                     "has_active_subscription": True,
@@ -268,8 +280,12 @@ class JobUsageView(APIView):
                     "job_limit": job_limit,
                     "remaining_jobs": remaining_jobs,
                     "subscription_end_date": subscription.end_date.isoformat(),
-                    "subscription_status" : subscription_status,
-                    "existing_subscription_id": existing_subscription_id
+                    "subscription_status": subscription.status,
+                    "existing_subscription_id": subscription.razorpay_subscription_id,
+                    "renewal_subscription_id": renewal_subscription_id,
+                    "renewal_subscription_plan": renewal_subscription_plan,
+                    "renewal_subscription_end_date": renewal_subscription_end_date,
+                    "is_subscription_near_expiry": is_near_expiry,
                 }
             else:
                 usage_stats = {
@@ -278,16 +294,18 @@ class JobUsageView(APIView):
                     "subscription_plan": None,
                     "job_limit": 0,
                     "remaining_jobs": 0,
-                    "subscription_end_date": None
+                    "subscription_end_date": None,
+                    "subscription_status": None,
+                    "existing_subscription_id": None,
+                    "renewal_subscription_id": renewal_subscription_id,
+                    "renewal_subscription_plan": renewal_subscription_plan,
+                    "renewal_subscription_end_date": renewal_subscription_end_date,
+                    "is_subscription_near_expiry": False,
                 }
 
             logger.info(f"Returning usage stats: {usage_stats}")
             return Response(usage_stats, status=status.HTTP_200_OK)
-        except Employer.DoesNotExist:
-            return Response(
-                {"error": "Employer profile not found"},
-                status=status.HTTP_404_NOT_FOUND
-            )
+        
         except Exception as e:
             logger.error(f"Error in JobUsageView: {str(e)}")
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -910,6 +928,7 @@ class GetQuestions(APIView):
             return Response(status=status.HTTP_203_NON_AUTHORITATIVE_INFORMATION)
 
 
+
 class Applyjob(APIView):
     """API view to handle job application submission by candidates."""
 
@@ -991,99 +1010,62 @@ class Applyjob(APIView):
                             status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
-class GetApproveView(APIView):
-    """API view to retrieve approval details for a candidate-employer pair."""
 
+
+
+class GetApproveView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, candidate_id, employer_id):
-        """Handle GET request to retrieve approval details.
-
-        Args:
-            request: HTTP request object.
-            candidate_id (int): ID of the candidate.
-            employer_id (int): ID of the employer.
-
-        Returns:
-            Response: JSON response with approval data or error details.
-        """
+        candidate = Candidate.objects.get(id=candidate_id)
+        employer = Employer.objects.get(id=employer_id)
+        print("inside approval job....", candidate, employer)
         try:
-            candidate = Candidate.objects.get(id=candidate_id)
-            employer = Employer.objects.get(id=employer_id)
-            approvals = Approvals.objects.get(candidate=candidate,
-                                             employer=employer)
-            serializer = ApprovalsSerializer(approvals,
-                                            context={'request': request})
-            logger.info(f"Serialized approval data: {serializer.data}")
+            approvals = Approvals.objects.get(candidate=candidate, employer=employer)
+            print("inside approval job....", approvals)
+            serializer = ApprovalsSerializer(approvals)
             return Response(serializer.data, status=status.HTTP_200_OK)
-        except Candidate.DoesNotExist:
-            return Response({"error": "Candidate not found"},
-                            status=status.HTTP_404_NOT_FOUND)
-        except Employer.DoesNotExist:
-            return Response({"error": "Employer not found"},
-                            status=status.HTTP_404_NOT_FOUND)
-        except Approvals.DoesNotExist:
-            return Response({"error": "Approval not found"},
-                            status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
-            logger.error(f"Error in GetApproveView: {str(e)}")
-            return Response({"error": str(e)},
-                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class ChatApprovalView(APIView):
-    """API view to handle chat approval requests and updates."""
-
     permission_classes = [IsAuthenticated]
-
-    def post(self, request, approval_id):
-        """Handle POST request to update chat approval status.
-
-        Args:
-            request: HTTP request object with 'message' and 'action' parameters.
-            approval_id (int): ID of the approval.
-
-        Returns:
-            Response: JSON response with success message or error details.
-        """
+    
+    def post(self, request, approvalId):
         message = request.data.get('message')
         action = request.data.get('action')
-        approval = Approvals.objects.get(id=approval_id)
-        candidate = Candidate.objects.get(id=approval.candidate.id)
-        employer = Employer.objects.get(id=approval.employer.id)
+        approval = Approvals.objects.get(id=approvalId)
+        candidate =Candidate.objects.get(id = approval.candidate.id)
+        employer = Employer.objects.get(id = approval.employer.id) 
+        print("inside approval job....", candidate, employer, approval)
         try:
             if action == "requested":
                 approval.is_requested = True
                 approval.is_approved = False
                 approval.is_rejected = False
                 approval.message = message
-                notification_message = (f"{candidate.user.full_name} is "
-                                       f"requested for chat approval with a "
-                                       f"message - {message}.")
-                reciver_id = employer.user.id
-                notification_user = User.objects.get(id=reciver_id)
+                notification_message = f"{candidate} is requested for chat approval with a message - {message}."
+                reciverid = employer.user.id
+                notification_user = User.objects.get(id = reciverid)
+                print("inside chat approval request,",notification_message, reciverid, notification_user)
             elif action == "approved":
                 approval.is_requested = False
                 approval.is_approved = True
                 approval.is_rejected = False
-                notification_message = (f"{employer.user.full_name} is "
-                                       "approved your chat request you can "
-                                       "now send messages.")
-                reciver_id = candidate.user.id
-                notification_user = User.objects.get(id=reciver_id)
-            elif action == "rejected":
+                notification_message = f"{employer} is approved your chat request you can now send messages."
+                reciverid = candidate.user.id
+                notification_user = User.objects.get(id = reciverid)
+            elif action == "rejected": 
                 approval.is_requested = False
                 approval.is_approved = False
                 approval.is_rejected = True
-                notification_message = (f"{employer.user.full_name} is "
-                                       "rejected your chat request.")
-                reciver_id = candidate.user.id
-                notification_user = User.objects.get(id=reciver_id)
-            notifications = Notifications.objects.create(
-                user=notification_user, message=notification_message
-            )
+                notification_message = f"{employer} is rejected your chat request."
+                reciverid = candidate.user.id
+                notification_user = User.objects.get(id = reciverid)
+            notifications = Notifications.objects.create(user = notification_user,message = notification_message)
             channel_layer = get_channel_layer()
             async_to_sync(channel_layer.group_send)(
-                f'notification_{reciver_id}',
+                f'notification_{reciverid}',
                 {
                     'type': 'notify_message',
                     'message': {
@@ -1097,31 +1079,18 @@ class ChatApprovalView(APIView):
                 }
             )
             approval.save()
-            return Response(
-                {"message": "Approval status updated successfully"},
-                status=status.HTTP_200_OK
-            )
+            return Response({"message": "Approval status updated successfully"}, status=status.HTTP_200_OK)
         except Approvals.DoesNotExist:
-            return Response({"error": "Approval not found"},
-                            status=status.HTTP_404_NOT_FOUND)
+            return Response({"error": "Approval not found"}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
-            return Response({"error": str(e)},
-                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def check_application(request, job_id):
-    """Check if the user has applied for a specific job.
-
-    Args:
-        request: HTTP request object.
-        job_id (int): ID of the job to check.
-
-    Returns:
-        Response: JSON response with application status.
-    """
-    has_applied = ApplyedJobs.objects.filter(
-        job_id=job_id, candidate__user=request.user
-    ).exists()
+    has_applied = ApplyedJobs.objects.filter(job_id=job_id, candidate__user=request.user).exists()
     return Response({"has_applied": has_applied})
+
+
+
+

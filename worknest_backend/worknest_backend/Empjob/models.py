@@ -20,6 +20,11 @@ class Jobs(models.Model):
 
     def __str__(self):
         return self.title or f"Job {self.id}"
+    class Meta:
+        indexes = [
+            models.Index(fields=['employer', 'title']),  
+        ]
+
 
 
 
@@ -44,6 +49,7 @@ class ApplyedJobs(models.Model):
         ("Interview Scheduled", "Interview Scheduled"),
         ("Accepted", "Accepted"),
         ("Rejected", "Rejected"),
+        ("Interview Cancelled", "Interview Cancelled"),
     )
     candidate = models.ForeignKey(Candidate, on_delete=models.CASCADE)
     job = models.ForeignKey(Jobs, on_delete=models.CASCADE)

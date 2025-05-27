@@ -79,6 +79,13 @@ class Notifications(models.Model):
     is_read = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
+    class Meta:
+        ordering = ['-created_at']
+    def mark_as_read(self):
+        self.is_read = True
+        self.save(update_fields=['is_read'])
+
+
     def __str__(self):
         return f"Notification for {self.user.full_name}: {self.message}"
 

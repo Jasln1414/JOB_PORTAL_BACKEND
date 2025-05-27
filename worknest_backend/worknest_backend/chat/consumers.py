@@ -117,6 +117,21 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
         recipient_id = reciver_id
         is_read = str(recipient_id) in ChatConsumer.active_users
         message_to_save = f"Message received from {sendername}: {message}"
+        print("recccccccccc",reciver_id)
+        print("savvvvvvvvvvvvvvvvvvv",recipient_id )
+
+
+
+
+        print("rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",message_to_save )
+
+
+
+        
+        print("recieptyttttttt",recipient_id )
+        print("senderrrrrrrrrrrrrrr........................", sendername)
+        print("3333333333333333........................",message)
+        print("senderrrrrrrrrrrrrrr........................",sender_id)
 
         await self.save_message(sendername, message, is_read, se_id)
         await self.save_notification(recipient_id, message_to_save)
@@ -211,15 +226,19 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
             message (str): Message content.
             sender_id (str): ID of the sender.
         """
-        if not recipient_id or recipient_id == '0' or \
-           str(recipient_id) == str(self.user_id):
+
+        if not recipient_id or recipient_id == '0' :
+        #  or \  str(recipient_id) == str(self.user_id):
             logger.warning(
                 f"Invalid recipient ID or same as sender: "
                 f"recipient_id={recipient_id}, user_id={self.user_id}"
             )
+
+            print("...................start...........")
             return
 
         try:
+            print("...................end...........")
             await self.channel_layer.group_send(
                 f'notification_{recipient_id}',
                 {
@@ -410,8 +429,8 @@ class NotificationConsumer(AsyncJsonWebsocketConsumer):
         message = event['message']
         sender_id = message.get('sender_id')
 
-        if str(sender_id) == str(self.user_id):
-            return
+        # if str(sender_id) == str(self.user_id):
+        #     return
 
         await self.send(text_data=json.dumps({
             'type': 'notification',
