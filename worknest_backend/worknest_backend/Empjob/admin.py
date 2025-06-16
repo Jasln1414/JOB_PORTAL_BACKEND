@@ -3,7 +3,7 @@ from .models import Jobs, SavedJobs, ApplyedJobs, Question, Answer
 
 @admin.register(Jobs)
 class JobsAdmin(admin.ModelAdmin):
-    list_display = ('title', 'employer', 'location', 'lpa', 'jobtype', 'active', 'posteDate')
+    list_display = ('title', 'employer', 'location', 'lpa', 'jobtype', 'active', 'posteDate','applyBefore')
     list_filter = ('active', 'jobtype', 'jobmode', 'industry')
     search_fields = ('title', 'location', 'employer__user__username')
     date_hierarchy = 'posteDate'

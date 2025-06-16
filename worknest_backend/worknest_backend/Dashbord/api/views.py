@@ -35,11 +35,11 @@ class EmployerApprovalView(APIView):
     Approve or reject an employer's account.
     Requires admin permissions in production.
     """
-    permission_classes = [AllowAny]  # Use IsAdminUser in production
+    permission_classes = [AllowAny]  
 
     def post(self, request):
         employer_id = request.data.get('id')
-        action = request.data.get('action')  # 'approve' or 'reject'
+        action = request.data.get('action')  
 
         try:
             employer = Employer.objects.get(id=employer_id)
@@ -125,73 +125,8 @@ class HomeView(APIView):
         }
         return Response(data, status=status.HTTP_200_OK)
 
-class UserGrowthSerializer(serializers.Serializer):
-    """
-    Serializer for user growth data (candidates and employers by date).
-    """
-    date = serializers.DateField()
-    candidate_count = serializers.IntegerField()
-    employer_count = serializers.IntegerField()
 
-class UserGrowthReportView(APIView):
-    """
-    Retrieve daily counts of new candidates and employers over a specified period.
-    Requires admin authentication.
-    """
-    permission_classes = [IsAuthenticated, IsAdminUser]
 
-    def get(self, request):
-        try:
-            days = int(request.query_params.get('days', 30))
-            if days <= 0 or days > 365:
-                return Response({"error": "Days must be between 1 and 365"}, status=status.HTTP_400_BAD_REQUEST)
-        except ValueError:
-            return Response({"error": "Invalid 'days' parameter"}, status=status.HTTP_400_BAD_REQUEST)
-
-        end_date = timezone.now().date()
-        start_date = end_date - timedelta(days=days)
-
-        try:
-            candidates_data = Candidate.objects.filter(
-                user__date_joined__gte=start_date,
-                user__date_joined__lte=end_date
-            ).annotate(
-                date=TruncDate('user__date_joined')
-            ).values('date').annotate(
-                candidate_count=Count('id')
-            ).order_by('date')
-
-            employers_data = Employer.objects.filter(
-                user__date_joined__gte=start_date,
-                user__date_joined__lte=end_date
-            ).annotate(
-                date=TruncDate('user__date_joined')
-            ).values('date').annotate(
-                employer_count=Count('id')
-            ).order_by('date')
-        except Exception as e:
-            return Response({"error": f"Database error: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-        date_range = {}
-        current_date = start_date
-        while current_date <= end_date:
-            date_str = current_date.strftime('%Y-%m-%d')
-            date_range[date_str] = {'date': date_str, 'candidate_count': 0, 'employer_count': 0}
-            current_date += timedelta(days=1)
-
-        for item in candidates_data:
-            date_str = item['date'].strftime('%Y-%m-%d')
-            if date_str in date_range:
-                date_range[date_str]['candidate_count'] = item['candidate_count']
-
-        for item in employers_data:
-            date_str = item['date'].strftime('%Y-%m-%d')
-            if date_str in date_range:
-                date_range[date_str]['employer_count'] = item['employer_count']
-
-        result = list(date_range.values())
-        serializer = UserGrowthSerializer(result, many=True)
-        return Response(serializer.data, status=status.HTTP_200_OK)
 
 # ------------------- Candidate and Employer Listing Views -------------------
 
@@ -360,56 +295,6 @@ class AdminJobModeration(APIView):
             logger.error(f"Error moderating job {job_id}: {str(e)}")
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-class JobTrendsReportView(APIView):
-    """
-    Retrieve daily counts of new and active job postings over a specified period.
-    Requires admin authentication.
-    """
-    permission_classes = [IsAuthenticated, IsAdminUser]
-
-    def get(self, request):
-        days = int(request.query_params.get('days', 30))
-        end_date = datetime.now().date()
-        start_date = end_date - timedelta(days=days)
-
-        jobs_data = Jobs.objects.filter(
-            posted_date__gte=start_date,
-            posted_date__lte=end_date
-        ).annotate(
-            date=TruncDate('posted_date')
-        ).values('date').annotate(
-            job_count=Count('id')
-        ).order_by('date')
-
-        active_jobs_data = Jobs.objects.filter(
-            posted_date__gte=start_date,
-            posted_date__lte=end_date,
-            active=True
-        ).annotate(
-            date=TruncDate('posted_date')
-        ).values('date').annotate(
-            active_job_count=Count('id')
-        ).order_by('date')
-
-        date_range = {}
-        current_date = start_date
-        while current_date <= end_date:
-            date_str = current_date.strftime('%Y-%m-%d')
-            date_range[date_str] = {'date': date_str, 'job_count': 0, 'active_job_count': 0}
-            current_date += timedelta(days=1)
-
-        for item in jobs_data:
-            date_str = item['date'].strftime('%Y-%m-%d')
-            if date_str in date_range:
-                date_range[date_str]['job_count'] = item['job_count']
-
-        for item in active_jobs_data:
-            date_str = item['date'].strftime('%Y-%m-%d')
-            if date_str in date_range:
-                date_range[date_str]['active_job_count'] = item['active_job_count']
-
-        result = list(date_range.values())
-        return Response(result, status=status.HTTP_200_OK)
 
 class ApplicationStatsView(APIView):
     """
@@ -501,7 +386,7 @@ class SubscriptionGrowthReportView(APIView):
             logger.error(f"Error in SubscriptionGrowthReportView: {str(e)}")
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-class SubscriptionPlanView(APIView):
+class SubscriptionPlanUpdateView(APIView):
     """
     Update a subscription plan by ID.
     Requires admin authentication.
@@ -535,20 +420,6 @@ class SubscriptionPlanListView(APIView):
         serializer = SubscriptionPlanSerializer(plans, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
-# class SubscriptionPlanDeleteView(APIView):
-#     """
-#     Delete a subscription plan by ID.
-#     Requires admin authentication.
-#     """
-#     permission_classes = [IsAdminUser]
-
-#     def delete(self, request, pk):
-#         try:
-#             plan = SubscriptionPlan.objects.get(pk=pk)
-#             plan.delete()
-#             return Response(status=status.HTTP_204_NO_CONTENT)
-#         except SubscriptionPlan.DoesNotExist:
-#             return Response({"error": "Subscription plan not found"}, status=status.HTTP_404_NOT_FOUND)
 
 
 

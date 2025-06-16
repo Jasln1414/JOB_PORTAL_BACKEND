@@ -1,7 +1,9 @@
 # account/api/urls.py
 from django.urls import path
+
+from chat import views
 from .views import (
-    EmployerRegisterView, OtpVarificationView, ProfileUpdateView, ResendOtpView, CurrentUser, EmpLoginView, EmployerProfileCreateView,
+    EmployerRegisterView, OtpVarificationView, ProfileUpdateView, ResendOtpView, CurrentUser, EmpLoginView,EmployerProfileCreatView,
     CandidateRegisterView, AuthCandidateView, UserDetails, CandidateProfileCreation, CandidateLoginView,AdminLoginView,AuthCandidateView,
     AuthEmployerView,ForgotPassView,ResetPassword,EmployerProfileUpdateView
 )
@@ -23,11 +25,11 @@ urlpatterns = [
     path('auth/candidate/', AuthCandidateView.as_view(), name="authcandidate"),
 
     path("user/profile_creation/", CandidateProfileCreation.as_view(), name='CandidateProfileCreation'),
-    path("user/details", UserDetails.as_view(), name="user-details"),  # Correctly nested under `api/account/`
+    path("user/details", UserDetails.as_view(), name="user-details"),  
 
     path('Emplogin/', EmpLoginView.as_view(), name="login"),
     path('employer/register/', EmployerRegisterView.as_view(), name="emp_register"),
-    path("user/emp_profile_creation/", EmployerProfileCreateView.as_view(), name="employerProfileCreation"),
+    path("user/emp_profile_creation/", EmployerProfileCreatView.as_view(), name="employerProfileCreation"),
 
     path('forgot_pass/', ForgotPassView.as_view(), name="forgot_pass"),
     path('verify-otp/', OtpVarificationView.as_view(), name="otp_verify"),
@@ -35,8 +37,7 @@ urlpatterns = [
     path('resend-otp/', ResendOtpView.as_view(), name="resend_otp"),
 
     path('employer/profile/update/', EmployerProfileUpdateView.as_view(), name='employer-profile-update'),
-   # path('employer/profile/delete/', EmployerProfileDeleteView.as_view(), name='employer-profile-delete'),
-
+   
 
 
     
@@ -45,7 +46,7 @@ urlpatterns = [
 
     path('admin/login/',AdminLoginView.as_view(),name="adminlogin"),
 
-    path('auth/candidate/',AuthCandidateView.as_view(),name="authcandidate"),
+   
     path('auth/employer/',AuthEmployerView.as_view(),name="authemployer"),
 
      # Profile Update URL

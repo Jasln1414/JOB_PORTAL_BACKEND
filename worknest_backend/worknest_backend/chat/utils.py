@@ -21,7 +21,7 @@ def send_notification(user_id, message, sender_id=None, chat_key=None):
         'type': 'notification',
         'message': message,
         'timestamp': datetime.now().isoformat(),
-        'id': f"notif_{int(datetime.now().timestamp() * 1000)}",  # Unique ID for the notification
+        'id': f"notif_{int(datetime.now().timestamp() * 1000)}",  
     }
     
     if sender_id:

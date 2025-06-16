@@ -1,15 +1,9 @@
-import logging
-from celery import shared_task # type: ignore
+
+from celery import shared_task 
 from django.core.mail import send_mail
 from django.conf import settings
 
-from chat.models import Notifications
-from .models import InterviewShedule
-from django.utils import timezone
-from datetime import timedelta
-from channels.layers import get_channel_layer
-from asgiref.sync import async_to_sync
-from datetime import datetime
+
 
 
 @shared_task(bind=True)
@@ -94,11 +88,7 @@ def send_acceptance_mail(self, email, username, title):
         print(f"Error sending email: {e}")
         raise self.retry(countdown=60, max_retries=3)
     
-# @shared_task(bind=True)
-# def test(self):
-#     for i in range(10):
-#         print(i)
-#     return 'done'
+
 
 
 @shared_task
@@ -121,43 +111,3 @@ def sample_interview_task():
 
 
 
-logger = logging.getLogger(__name__)
-
-@shared_task
-def update_interview_statuses():
-    now = timezone.now()
-    start_window_end = 15
-    interviews = InterviewShedule.objects.filter(active=True, status='Upcoming')
-    
-    for interview in interviews:
-        start_time = interview.date
-        end_time = start_time + timedelta(minutes=start_window_end)
-        
-        if now > end_time:
-            if interview.attended:
-                interview.status = 'Completed'
-                interview.active = False
-            else:
-                interview.status = 'You missed'
-                interview.active = False
-            interview.save()
-            
-            candidate_id = interview.candidate.user.id
-            message = f"Interview status for {interview.job.title} updated to {interview.status}."
-            Notifications.objects.create(user=interview.candidate.user, message=message)
-            channel_layer = get_channel_layer()
-            async_to_sync(channel_layer.group_send)(
-                f'notification_{candidate_id}',
-                {
-                    'type': 'notify_message',
-                    'message': {
-                        'text': message,
-                        'sender': "employer",
-                        'is_read': False,
-                        'timestamp': datetime.now().isoformat(),
-                        'chat_id': None
-                    },
-                    'unread_count': 1
-                }
-            )
-            logger.info(f"Updated interview {interview.id}: status={interview.status}, notified user {candidate_id}")

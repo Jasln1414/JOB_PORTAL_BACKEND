@@ -21,9 +21,19 @@ class ChatRoom(models.Model):
         help_text="Timestamp when the chat room was created."
     )
 
+
     def __str__(self):
         """String representation of the chat room."""
         return f"Chat between {self.candidate} and {self.employer}"
+    def __str__(self):
+        try:
+            return f"Chat between {self.candidate} and {self.employer}"
+        except Employer.DoesNotExist:
+            return f"Chat with {self.candidate} (employer missing)"
+        except Exception:
+            return "Chat room"
+
+    
 
 class ChatMessage(models.Model):
     """Represents a single message in a chat room."""
@@ -66,11 +76,13 @@ class ChatMessage(models.Model):
 
     se_id= models.IntegerField(null=True,blank=True)
 
-
-
     def __str__(self):
-        """String representation of the chat message."""
-        return f"{self.sendername} in {self.chatroom}: {self.message or 'Media message'}"
+        try:
+            return f"{self.sendername} in {self.chatroom}: {self.message or 'Media message'}"
+        except Exception:
+            return f"Message from {self.sendername}"
+
+   
     
     
 class Notifications(models.Model):

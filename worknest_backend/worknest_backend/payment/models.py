@@ -54,32 +54,29 @@ class SubscriptionPlan(models.Model):
             ),
         ]
 
+
+
+
+
+
 class EmployerSubscription(models.Model):
-    STATUS_CHOICES = (
-        ('active', 'Active'),
-        ('expired', 'Expired'),
-        ('cancelled', 'Cancelled'),
-        ('pending', 'Pending'),  # Add 'pending' to match your usage
-    )
-    
-    employer = models.ForeignKey(Employer, on_delete=models.CASCADE, related_name="subscriptions")
+    employer = models.ForeignKey(Employer, on_delete=models.CASCADE)
     plan = models.ForeignKey(SubscriptionPlan, on_delete=models.CASCADE)
-    start_date = models.DateTimeField(auto_now_add=True)
+    razorpay_subscription_id = models.CharField(max_length=100, unique=True)
+    payment = models.ForeignKey(Payment, on_delete=models.SET_NULL, null=True, blank=True)
+    status = models.CharField(
+        max_length=20,
+        choices=[('pending', 'Pending'), ('active', 'Active'), ('inactive', 'Inactive'), ('restricted', 'Restricted')],
+        default='pending'
+    )
+    start_date = models.DateTimeField(null=True, blank=True)
     end_date = models.DateTimeField(null=True, blank=True)
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')  # Changed default to 'pending'
-    razorpay_subscription_id = models.CharField(max_length=255, null=True, blank=True)
-    payment = models.OneToOneField(Payment, on_delete=models.SET_NULL, null=True, blank=True)
-    job_limit = models.IntegerField(default=0, help_text="Employer-specific job limit")  # Added field
-    subscribed_job=models.IntegerField(default=0)
+    job_limit = models.PositiveIntegerField(default=0)  
+    subscribed_job = models.PositiveIntegerField(default=0)  
+
     def __str__(self):
         return f"{self.employer} - {self.plan.name} ({self.status})"
 
-    def save(self, *args, **kwargs):
-        if not self.pk and self.plan:  # On creation, set job_limit from plan
-            self.job_limit = self.plan.job_limit
-        super().save(*args, **kwargs)
-
-    def is_active(self):
-        return self.status == 'active' and self.end_date and self.end_date > timezone.now()
-
-
+    def can_post_job(self):
+        """Check if the employer can post more jobs."""
+        return self.status == 'active' and self.subscribed_job < self.job_limit

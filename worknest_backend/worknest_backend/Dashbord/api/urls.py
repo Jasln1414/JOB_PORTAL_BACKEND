@@ -3,9 +3,9 @@ from django.urls import path
 from .views import (
     HomeView, CandidateView, EmployerView, CandidateListView, EmployerListView,
     EmployerApprovalView, StatusView, AdminGetAllJobs, AdminGetJobDetail,
-    AdminJobModeration, UserGrowthReportView, JobTrendsReportView,
+    AdminJobModeration,
     ApplicationStatsView, SalesReportView, SubscriptionGrowthReportView,
-    SubscriptionPlanListView, SubscriptionPlanView, SubscriptionPlanDeleteView,CandidateAppliedJobsView
+    SubscriptionPlanListView, SubscriptionPlanUpdateView, SubscriptionPlanDeleteView,CandidateAppliedJobsView
 )
 
 # URL patterns for the application
@@ -30,9 +30,7 @@ urlpatterns = [
     path('admin/job/<int:pk>/', AdminGetJobDetail.as_view(), name='admin-get-job-detail'),
     path('admin/jobs/<int:job_id>/moderate/', AdminJobModeration.as_view(), name='admin-job-moderation'),
 
-    # ------------------- Reports -------------------
-    path('reports/user-growth/', UserGrowthReportView.as_view(), name='user-growth-report'),
-    path('reports/job-trends/', JobTrendsReportView.as_view(), name='job-trends-report'),
+    
     
     path('reports/application-stats/', ApplicationStatsView.as_view(), name='application-stats'),
     path('salesReport/', SalesReportView.as_view(), name='sales-report'),
@@ -40,6 +38,6 @@ urlpatterns = [
 
     # ------------------- Subscription Plans -------------------
     path('subscription/plans/', SubscriptionPlanListView.as_view(), name='list-subscription-plans'),
-    path('subscription/plans/<int:pk>/', SubscriptionPlanView.as_view(), name='update-subscription-plan'),
+    path('subscription/plans/<int:pk>/', SubscriptionPlanUpdateView.as_view(), name='update-subscription-plan'),
     path('subscription/plans/<int:pk>/delete/', SubscriptionPlanDeleteView.as_view(), name='delete-subscription-plan'),
 ]

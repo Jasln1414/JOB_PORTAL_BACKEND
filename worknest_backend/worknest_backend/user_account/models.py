@@ -89,7 +89,10 @@ class Employer(models.Model):
     
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     completed = models.BooleanField(default=False)
-    phone = models.BigIntegerField(null=True, blank=True)
+   
+   
+    phone = models.BigIntegerField( null=True, blank=True)
+   
     profile_pic = models.ImageField(upload_to='company_pic', blank=True, null=True)
     headquarters = models.CharField(max_length=100, null=True, blank=True)
     address = models.TextField(max_length=200, blank=True, null=True)

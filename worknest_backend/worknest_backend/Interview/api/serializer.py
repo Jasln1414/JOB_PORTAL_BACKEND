@@ -16,12 +16,6 @@ class SheduleInterviewSerializer(serializers.ModelSerializer):
         validated_data['employer'] = employer
         return super().create(validated_data)
 
-
-
-
-
-
-
 class InterviewSheduleSerializer(serializers.ModelSerializer):
     employer_name = serializers.SerializerMethodField()
     candidate_name = serializers.SerializerMethodField()
@@ -48,11 +42,10 @@ class InterviewSheduleSerializer(serializers.ModelSerializer):
             "location": job.location,
             "experience": job.experience,
             "lpa": job.lpa,
-            # Remove employment_type if not needed or add to Jobs model
-            # "employment_type": job.employment_type  
+            
         }
     
-    # Keep other get_* methods the same
+   
     def get_employer_name(self, obj):
         return obj.employer.user.full_name if obj.employer.user else ''
     

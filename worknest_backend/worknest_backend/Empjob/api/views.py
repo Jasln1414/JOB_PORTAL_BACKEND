@@ -1,14 +1,9 @@
-"""Module for handling job posting, application, and user profile views.
-
-This module provides API endpoints for job management, application processes,
-user profiles, and payment-related actions using Django REST Framework.
-"""
 
 # Standard library imports
 import logging
 import os
 from datetime import datetime, timedelta
-
+from django.db import transaction
 # Django imports
 from django.conf import settings
 from django.http import JsonResponse
@@ -19,6 +14,7 @@ from django.views.decorators.csrf import ensure_csrf_cookie
 from django.db.models import Q
 
 # Third-party imports
+from psycopg import Transaction
 from rest_framework import generics, permissions, status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.pagination import PageNumberPagination
@@ -27,9 +23,13 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 
 from django_filters.rest_framework import DjangoFilterBackend # type: ignore
+from django.db import transaction
 import razorpay
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
+from django.db import transaction
+
+from chat import models
 
 # Local app imports
 from .serializer import (
@@ -39,30 +39,19 @@ from .serializer import (
 )
 from user_account.models import Employer, Candidate, User
 from Empjob.models import Jobs, Question, Answer, ApplyedJobs, SavedJobs, Approvals
-from payment.models import EmployerSubscription, Payment
+from payment.models import EmployerSubscription
 from chat.models import Notifications
 
-# Configure logging
-logger = logging.getLogger(__name__)
+from django.db import transaction
+
+
 
 # Initialize Razorpay client
 razorpay_client = razorpay.Client(
     auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET)
 )
 
-
-def csrf_token_view(request):
-    """Return the CSRF token for the request.
-
-    Args:
-        request: HTTP request object.
-
-    Returns:
-        JsonResponse: Response containing the CSRF token.
-    """
-    token = get_token(request)
-    return JsonResponse({'csrfToken': token})
-
+logger = logging.getLogger(__name__)
 
 @ensure_csrf_cookie
 def get_csrf_token(request):
@@ -77,144 +66,112 @@ def get_csrf_token(request):
     return JsonResponse({'csrfToken': get_token(request)})
 
 
-def get_employer_job_usage(employer):
-    """Get job usage statistics for an employer.
-
-    Args:
-        employer (Employer): Employer instance.
-
-    Returns:
-        dict: Contains job count, subscription info, and remaining job slots.
-    """
-    active_subscription = EmployerSubscription.objects.filter(
-        employer=employer,
-        status='active',
-        end_date__gt=timezone.now()
-    ).first()
-
-    job_count = Jobs.objects.filter(employer=employer).count()
-
-    remaining_jobs = 0
-    plan_name = None
-    plan_limit = 0
-
-    if active_subscription:
-        plan_name = active_subscription.plan.get_name_display()
-        plan_limit = active_subscription.plan.job_limit
-        remaining_jobs = ("Unlimited" if plan_limit == 9999
-                          else max(0, plan_limit - job_count))
-
-    return {
-        "job_count": job_count,
-        "has_active_subscription": bool(active_subscription),
-        "subscription_plan": plan_name,
-        "job_limit": plan_limit,
-        "remaining_jobs": remaining_jobs,
-        "subscription_end_date": (active_subscription.end_date
-                                 if active_subscription else None)
-    }
 
 
 class PostJob(APIView):
-    """API view to handle job posting by authenticated employers.
-
-    Requires an active subscription or payment for additional job postings.
-    """
-
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        """Handle POST request to create a new job posting.
-
-        Args:
-            request: HTTP request object containing job data.
-
-        Returns:
-            Response: JSON response with success message or error details.
-        """
         try:
-            user = request.user
-            if user.user_type != 'employer':
-                return Response({"error": "Only employers can post jobs"},
-                                status=status.HTTP_403_FORBIDDEN)
+           
+            with transaction.atomic():
+                user = request.user
+                logger.info(f"Attempting job post by User {user.id}")
+                
+                if user.user_type != 'employer':
+                    return Response(
+                        {"error": "Only employers can post jobs"}, 
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+                
+                try:
+                    employer = Employer.objects.get(user=user)
+                    logger.info(f"User {user.id} maps to Employer {employer.id}")
+                except Employer.DoesNotExist:
+                    logger.error(f"No employer profile for user {user.id}")
+                    return Response(
+                        {"error": "Employer profile not found"}, 
+                        status=status.HTTP_404_NOT_FOUND
+                    )
 
-            employer = Employer.objects.get(user=user)
-            active_subscription = EmployerSubscription.objects.filter(
-                employer=employer,
-                status='active',
-                end_date__gt=timezone.now()
-            ).first()
-
-            if not active_subscription:
-                return Response({
-                    "error": "No active subscription found",
-                    "subscription_required": True,
-                    "message": "Please subscribe to post jobs"
-                }, status=status.HTTP_402_PAYMENT_REQUIRED)
-
-            if (active_subscription.subscribed_job >=
-                    active_subscription.plan.job_limit):
-                if active_subscription.plan.job_limit == 9999:
-                    pass
-                else:
-                    if 'razorpay_payment_id' not in request.data:
-                        order = razorpay_client.order.create({
-                            "amount": 200 * 100,
-                            "currency": "INR",
-                            "payment_capture": 1
-                        })
-                        return Response({
-                            "payment_required": True,
-                            "message": (f"You've reached your plan limit of "
-                                        f"{active_subscription.plan.job_limit} "
-                                        "jobs. Payment required for "
-                                        "additional job posting."),
-                            "order_id": order['id'],
-                            "amount": order['amount'],
-                            "key": settings.RAZORPAY_KEY_ID
-                        }, status=status.HTTP_402_PAYMENT_REQUIRED)
-
-                    payment_id = request.data['razorpay_payment_id']
-                    if not Payment.objects.filter(
-                        transaction_id=payment_id,
-                        employer=employer,
-                        status='success'
-                    ).exists():
-                        return Response(
-                            {"error": "Invalid or unverified payment"},
-                            status=status.HTTP_400_BAD_REQUEST
-                        )
-
-            serializer = PostJobSerializer(
-                data=request.data, context={'employer': employer}
-            )
-            if serializer.is_valid():
-                job = serializer.save()
-                active_subscription.subscribed_job += 1
-                active_subscription.save()
+                active_subscription = (EmployerSubscription.objects
+                                    .select_for_update()
+                                    .filter(
+                                        employer=employer,
+                                        status='active',
+                                        end_date__gt=timezone.now()
+                                    )
+                                    .select_related('plan')
+                                    .first())
+                
+                if not active_subscription:
+                    logger.warning(f"No active subscription for employer {employer.id}")
+                    return Response(
+                        {
+                            "error": "No active subscription found",
+                            "subscription_required": True,
+                            "message": "Please subscribe to post jobs"
+                        }, 
+                        status=status.HTTP_402_PAYMENT_REQUIRED
+                    )
+                
+                # Debug logging
                 logger.info(
-                    f"Job posted by employer {employer.id} with subscription "
-                    f"{active_subscription.id if active_subscription else 'None'}"
+                    f"Subscription details - "
+                    f"Limit: {active_subscription.job_limit}, "
+                    f"Used: {active_subscription.subscribed_job}, "
+                    f"Plan: {getattr(active_subscription.plan, 'name', None)}"
                 )
+                
+                # Validation
+                if active_subscription.job_limit <= 0:
+                    logger.error(f"Invalid job limit configuration for employer {employer.id}")
+                    return Response(
+                        {
+                            "error": "Your plan doesn't allow job postings",
+                            "message": "Please upgrade your subscription"
+                        }, 
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+                
+                if (active_subscription.subscribed_job >= active_subscription.job_limit 
+                    and active_subscription.job_limit != 9999):
+                    logger.warning(
+                        f"Job limit reached for employer {employer.id}: "
+                        f"{active_subscription.subscribed_job}/{active_subscription.job_limit}"
+                    )
+                    return Response(
+                        {
+                            "error": "Job limit reached",
+                            "message": "You've reached your plan's job posting limit."
+                        }, 
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+                
+                serializer = PostJobSerializer(data=request.data, context={'employer': employer})
+                if serializer.is_valid():
+                    job = serializer.save()
+                    active_subscription.subscribed_job += 1
+                    active_subscription.save()
+                    return Response(
+                        {"message": "Job posted successfully"}, 
+                        status=status.HTTP_201_CREATED
+                    )
+                
+                logger.error(f"Serializer errors: {serializer.errors}")
                 return Response(
-                    {"message": "Job posted successfully"},
-                    status=status.HTTP_201_CREATED
+                    serializer.errors, 
+                    status=status.HTTP_400_BAD_REQUEST
                 )
-
-            logger.error(f"Serializer errors: {serializer.errors}")
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-        except Employer.DoesNotExist:
-            return Response(
-                {"error": "Employer profile not found"},
-                status=status.HTTP_404_NOT_FOUND
-            )
+                
         except Exception as e:
-            logger.error(f"Unexpected error in PostJob: {str(e)}")
+            logger.exception(f"Unexpected error in PostJob for user {user.id if 'user' in locals() else 'unknown'}")
+           
             return Response(
-                {"error": "An unexpected error occurred"},
+                {"error": "An unexpected error occurred while processing your request"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
 
 
 
@@ -225,8 +182,6 @@ class JobUsageView(APIView):
         logger.info(f"JobUsageView endpoint hit! User ID: {request.user.id}")
         try:
             user = request.user
-            logger.info(f"User: {user.id}, user_type: {getattr(user, 'user_type', 'N/A')}")
-            
             if not hasattr(user, 'user_type') or user.user_type.lower() != 'employer':
                 logger.error("User is not an employer")
                 return Response({"error": "Only employers can access this information"}, status=status.HTTP_403_FORBIDDEN)
@@ -241,37 +196,21 @@ class JobUsageView(APIView):
             # Get active subscription
             subscription = EmployerSubscription.objects.filter(
                 employer__in=employers,
-                status__iexact="active",
+                status__in=['active', 'restricted'],  # Include restricted subscriptions
                 end_date__gt=timezone.now()
             ).order_by('-start_date').first()
 
-            # Determine if active subscription is near expiry
-            is_near_expiry = False
-            if subscription:
-                days_until_expiry = (subscription.end_date - timezone.now()).days
-                is_near_expiry = days_until_expiry <= 7  # Show renewal button if less than or equal to 7 days remaining
-
-            # Get renewal subscription (regardless of active state)
+            # Get renewal subscription (for expired/inactive cases)
             renewal_subscription = EmployerSubscription.objects.filter(
                 employer__in=employers,
                 status__in=["expired", "cancelled", "inactive"]
             ).order_by('-end_date').first()
 
-            # Include renewal subscription details only if necessary
-            if not subscription or is_near_expiry:
-                renewal_subscription_id = renewal_subscription.razorpay_subscription_id if renewal_subscription else None
-                renewal_subscription_plan = renewal_subscription.plan.name if renewal_subscription else None
-                renewal_subscription_end_date = renewal_subscription.end_date.isoformat() if renewal_subscription else None
-            else:
-                renewal_subscription_id = None
-                renewal_subscription_plan = None
-                renewal_subscription_end_date = None
-
             job_count = Jobs.objects.filter(employer__in=employers, active=True).count()
 
             if subscription:
                 subscribed_job_count = subscription.subscribed_job
-                job_limit = subscription.plan.job_limit
+                job_limit = subscription.job_limit 
                 remaining_jobs = "Unlimited" if job_limit == 9999 else max(0, job_limit - subscribed_job_count)
                 usage_stats = {
                     "job_count": job_count,
@@ -280,12 +219,11 @@ class JobUsageView(APIView):
                     "job_limit": job_limit,
                     "remaining_jobs": remaining_jobs,
                     "subscription_end_date": subscription.end_date.isoformat(),
-                    "subscription_status": subscription.status,
+                    "subscription_status": subscription.status,  # Include restricted status
                     "existing_subscription_id": subscription.razorpay_subscription_id,
-                    "renewal_subscription_id": renewal_subscription_id,
-                    "renewal_subscription_plan": renewal_subscription_plan,
-                    "renewal_subscription_end_date": renewal_subscription_end_date,
-                    "is_subscription_near_expiry": is_near_expiry,
+                    "renewal_subscription_id": renewal_subscription.razorpay_subscription_id if renewal_subscription else None,
+                    "renewal_subscription_plan": renewal_subscription.plan.name if renewal_subscription else None,
+                    "renewal_subscription_end_date": renewal_subscription.end_date.isoformat() if renewal_subscription else None,
                 }
             else:
                 usage_stats = {
@@ -297,15 +235,14 @@ class JobUsageView(APIView):
                     "subscription_end_date": None,
                     "subscription_status": None,
                     "existing_subscription_id": None,
-                    "renewal_subscription_id": renewal_subscription_id,
-                    "renewal_subscription_plan": renewal_subscription_plan,
-                    "renewal_subscription_end_date": renewal_subscription_end_date,
-                    "is_subscription_near_expiry": False,
+                    "renewal_subscription_id": renewal_subscription.razorpay_subscription_id if renewal_subscription else None,
+                    "renewal_subscription_plan": renewal_subscription.plan.name if renewal_subscription else None,
+                    "renewal_subscription_end_date": renewal_subscription.end_date.isoformat() if renewal_subscription else None,
                 }
 
             logger.info(f"Returning usage stats: {usage_stats}")
             return Response(usage_stats, status=status.HTTP_200_OK)
-        
+
         except Exception as e:
             logger.error(f"Error in JobUsageView: {str(e)}")
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -317,14 +254,7 @@ class EditJob(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request):
-        """Handle POST request to update an existing job.
-
-        Args:
-            request: HTTP request object containing job data and jobId.
-
-        Returns:
-            Response: JSON response with updated job data or error status.
-        """
+        
         job_id = request.data.get("jobId")
         try:
             job = Jobs.objects.get(id=job_id)
@@ -348,14 +278,7 @@ class ProfileView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        """Handle GET request to retrieve user profile.
 
-        Args:
-            request: HTTP request object.
-
-        Returns:
-            Response: JSON response with profile data or error details.
-        """
         user = request.user
         try:
             candidate = Candidate.objects.get(user=user)
@@ -388,14 +311,7 @@ class GetJob(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        """Handle GET request to retrieve jobs for the employer.
-
-        Args:
-            request: HTTP request object.
-
-        Returns:
-            Response: JSON response with job data or error details.
-        """
+        
         user = request.user
         try:
             employer = Employer.objects.get(user=user)
@@ -412,29 +328,35 @@ class GetJob(APIView):
             return Response(status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
+
+
 class GetAllJob(APIView):
     """API view to retrieve all jobs based on user type."""
 
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        """Handle GET request to retrieve all jobs.
-
-        Args:
-            request: HTTP request object.
-
-        Returns:
-            Response: JSON response with job data or error details.
-        """
         try:
+            today = timezone.now().date()
+
+            
+            jobs = Jobs.objects.filter(
+                active=True
+            ).filter(
+                Q(applyBefore__isnull=True) | Q(applyBefore__gte=today)
+            )
+
+            
             if request.user.user_type == "employer":
                 employer = Employer.objects.get(user=request.user)
-                jobs = Jobs.objects.filter(employer=employer)
-            else:
-                jobs = Jobs.objects.all()
+                jobs = jobs.filter(employer=employer)
+
+            
+            jobs = jobs.order_by('-posteDate')
 
             serializer = JobSerializer(jobs, many=True)
             return Response(serializer.data, status=status.HTTP_200_OK)
+
         except Employer.DoesNotExist:
             return Response(
                 {"error": "Employer profile not found"},
@@ -443,22 +365,13 @@ class GetAllJob(APIView):
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-
 class GetJobDetail(APIView):
     """API view to retrieve details of a specific job."""
 
     permission_classes = [IsAuthenticated]
 
     def get(self, request, job_id):
-        """Handle GET request to retrieve job details.
-
-        Args:
-            request: HTTP request object.
-            job_id (int): ID of the job to retrieve.
-
-        Returns:
-            Response: JSON response with job details or error details.
-        """
+        
         try:
             job = Jobs.objects.select_related('employer',
                                              'employer__user').get(id=job_id)
@@ -483,14 +396,7 @@ class GetApplyedjob(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        """Handle GET request to retrieve applied jobs.
-
-        Args:
-            request: HTTP request object.
-
-        Returns:
-            Response: JSON response with applied job data or error details.
-        """
+        
         user = request.user
         try:
             candidate = Candidate.objects.get(user=user)
@@ -498,7 +404,7 @@ class GetApplyedjob(APIView):
             serializer = ApplyedJobSerializer(
                 applied_jobs, many=True, context={'request': request}
             )
-            logger.info(f"Serialized applied jobs data: {serializer.data}")
+            # logger.info(f"Serialized applied jobs data: {serializer.data}")
             return Response(serializer.data, status=status.HTTP_200_OK)
         except Candidate.DoesNotExist:
             return Response({"message": "Candidate not found"}, status=404)
@@ -507,17 +413,17 @@ class GetApplyedjob(APIView):
             return Response({"message": str(e)}, status=500)
 
     def post(self, request, approve_id):
-        """Handle POST request to approve a chat request (currently a stub).
-
-        Args:
-            request: HTTP request object.
-            approve_id (int): ID of the approval.
-
-        Returns:
-            Response: JSON response with success message.
-        """
+       
+        
         return Response({"message": "Chat request approved"},
                         status=status.HTTP_200_OK)
+
+
+
+
+
+
+
 
 
 class GetApplicationjob(APIView):
@@ -526,25 +432,21 @@ class GetApplicationjob(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        """Handle GET request to retrieve job applications.
-
-        Args:
-            request: HTTP request object.
-
-        Returns:
-            Response: JSON response with application data or error details.
-        """
+        
         user = request.user
         try:
             employer = Employer.objects.get(user=user)
-            jobs = Jobs.objects.filter(employer=employer, active=True)
+            # Order jobs by most recently created
+            jobs = Jobs.objects.filter(employer=employer, active=True).order_by('-posteDate')
+
+
+
             serializer = ApplicationSerializer(jobs, many=True)
             return Response({'data': serializer.data},
                             status=status.HTTP_200_OK)
         except Exception as e:
             return Response({'error': str(e)},
                             status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
 
 class StandardResultsSetPagination(PageNumberPagination):
     """Custom pagination class with configurable page size."""
@@ -553,43 +455,6 @@ class StandardResultsSetPagination(PageNumberPagination):
     page_size_query_param = 'page_size'
     max_page_size = 100
 
-
-import django_filters # type: ignore
-
-
-class JobFilter(django_filters.FilterSet):
-    title = django_filters.CharFilter(field_name='title', lookup_expr='icontains')
-    location = django_filters.CharFilter(field_name='location', lookup_expr='icontains')
-    job_type = django_filters.CharFilter(field_name='job_type', lookup_expr='exact')
-
-    class Meta:
-        model = Jobs
-        fields = ['title', 'location', 'job_type']
-
-class JobSearchView(generics.ListAPIView):
-    """API view for searching jobs with filtering and pagination."""
-
-    permission_classes = [IsAuthenticated]
-    queryset = Jobs.objects.select_related('employer').filter(
-        active=True
-    ).order_by('-posteDate')
-    serializer_class = SearchSerializer
-    filter_backends = [DjangoFilterBackend]
-    filterset_class = JobFilter
-    pagination_class = StandardResultsSetPagination
-
-    def get_serializer_context(self):
-        """Add request and settings context to serializer.
-
-        Returns:
-            dict: Updated context with request and media root.
-        """
-        context = super().get_serializer_context()
-        context.update({
-            'request': self.request,
-            'settings': {'MEDIA_ROOT': settings.MEDIA_ROOT}
-        })
-        return context
 
 
 class GetAllJobsView(generics.ListAPIView):
@@ -603,11 +468,7 @@ class GetAllJobsView(generics.ListAPIView):
     pagination_class = StandardResultsSetPagination
 
     def get_serializer_context(self):
-        """Add request and settings context to serializer.
-
-        Returns:
-            dict: Updated context with request and media root.
-        """
+        
         context = super().get_serializer_context()
         context.update({
             'request': self.request,
@@ -616,62 +477,82 @@ class GetAllJobsView(generics.ListAPIView):
         return context
 
 
+class JobSearchView(generics.ListAPIView):
+    """API view for searching jobs by title and location."""
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = SearchSerializer
+    pagination_class = StandardResultsSetPagination
+
+    def get_queryset(self):
+        """Filter jobs based on title and location query parameters."""
+        queryset = Jobs.objects.select_related('employer').filter(active=True)
+
+        title = self.request.query_params.get('title', '').strip()
+        location = self.request.query_params.get('location', '').strip()
+
+        if title and location:
+           
+            queryset = queryset.filter(
+                Q(title__icontains=title) & 
+                Q(location__icontains=location)
+            )
+        elif title:
+            queryset = queryset.filter(title__icontains=title)
+        elif location:
+            queryset = queryset.filter(location__icontains=location)
+
+        return queryset
+
+    def get_serializer_context(self):
+        """Add request and media context to serializer."""
+        context = super().get_serializer_context()
+        context.update({
+            'request': self.request,
+            'MEDIA_URL': '/media/',  
+        })
+        return context
+
+
+
+
+
+
 class JobAutocompleteView(APIView):
     """API view for job autocomplete suggestions."""
 
     def get(self, request):
-        """Handle GET request to provide job autocomplete suggestions.
-
-        Args:
-            request: HTTP request object with 'q' query parameter.
-
-        Returns:
-            Response: JSON response with suggestion list or empty list.
-        """
         query = request.query_params.get('q', '').strip()
         if not query:
             return Response([], status=status.HTTP_200_OK)
+
         suggestions = []
         try:
-            titles = Jobs.objects.filter(
-                Q(title__icontains=query) & Q(active=True)
+            
+            start_titles = Jobs.objects.filter(
+                Q(title__istartswith=query) & Q(active=True)
             ).values('title').distinct()[:5]
+
+            
+            if len(start_titles) < 5:
+                contain_titles = Jobs.objects.filter(
+                    Q(title__icontains=query) & ~Q(title__istartswith=query) & Q(active=True)
+                ).values('title').distinct()[:(5 - len(start_titles))]
+
+                all_titles = list(start_titles) + list(contain_titles)
+            else:
+                all_titles = list(start_titles)
+
             suggestions.extend(
-                [{'type': 'title', 'value': t['title']} for t in titles]
+                [{'type': 'title', 'value': t['title']} for t in all_titles]
             )
 
-            locations = Jobs.objects.filter(
-                Q(location__icontains=query) & Q(active=True)
-            ).values('location').distinct()[:5]
-            suggestions.extend(
-                [{'type': 'location', 'value': l['location']} for l in locations]
-            )
-
-            jobtypes = Jobs.objects.filter(
-                Q(jobtype__icontains=query) & Q(active=True)
-            ).values('jobtype').distinct()[:5]
-            suggestions.extend(
-                [{'type': 'jobtype', 'value': j['jobtype']} for j in jobtypes]
-            )
-
-            jobmodes = Jobs.objects.filter(
-                Q(jobmode__icontains=query) & Q(active=True)
-            ).values('jobmode').distinct()[:5]
-            suggestions.extend(
-                [{'type': 'jobmode', 'value': j['jobmode']} for j in jobmodes]
-            )
-
-            industries = Jobs.objects.filter(
-                Q(industry__icontains=query) & Q(active=True)
-            ).values('industry').distinct()[:5]
-            suggestions.extend(
-                [{'type': 'industry', 'value': i['industry']} for i in industries]
-            )
         except Exception as e:
             logger.error(f"Error fetching suggestions: {str(e)}")
 
         suggestions = sorted(suggestions, key=lambda x: x['value'].lower())[:10]
         return Response(suggestions, status=status.HTTP_200_OK)
+
 
 
 class GetJobStatus(APIView):
@@ -680,15 +561,7 @@ class GetJobStatus(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, job_id):
-        """Handle POST request to change job status.
-
-        Args:
-            request: HTTP request object with 'action' parameter.
-            job_id (int): ID of the job to update.
-
-        Returns:
-            Response: JSON response with status message and job data.
-        """
+        
         action = request.data.get('action')
         try:
             job = Jobs.objects.get(id=job_id)
@@ -729,15 +602,7 @@ class SavejobStatus(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, job_id):
-        """Handle POST request to save or unsave a job.
-
-        Args:
-            request: HTTP request object with 'action' parameter.
-            job_id (int): ID of the job to save/unsave.
-
-        Returns:
-            Response: JSON response with success message.
-        """
+        
         action = request.data.get('action')
         user = request.user
 
@@ -791,15 +656,7 @@ class CheckJobSaveStatus(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, job_id):
-        """Handle GET request to check job save status.
-
-        Args:
-            request: HTTP request object.
-            job_id (int): ID of the job to check.
-
-        Returns:
-            Response: JSON response with save status or error details.
-        """
+       
         user = request.user
         try:
             job = Jobs.objects.get(id=job_id)
@@ -825,14 +682,7 @@ class SavedJobsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        """Handle GET request to retrieve saved jobs.
-
-        Args:
-            request: HTTP request object.
-
-        Returns:
-            Response: JSON response with saved job data or error details.
-        """
+        
         try:
             candidate = get_object_or_404(Candidate, user=request.user)
             saved_jobs = SavedJobs.objects.filter(candidate=candidate)
@@ -854,18 +704,15 @@ class ApplicationStatusView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, job_id):
-        """Handle POST request to update application status.
-
-        Args:
-            request: HTTP request object with 'action' parameter.
-            job_id (int): ID of the applied job.
-
-        Returns:
-            Response: JSON response with success message or error details.
-        """
-        action = request.data.get('action')
+       
+        action = request.data.get('status')
+        selected_job_id = request.data.get('job_id')
+        candidate_id = request.data.get('candidate_id')
+        print('statusbloodyfoolLLLLLLLLLLLL............',action)
         try:
-            applied_job = ApplyedJobs.objects.get(id=job_id)
+            candidate = Candidate.objects.get(id=candidate_id)
+            job = Jobs.objects.get(id=selected_job_id)
+            applied_job = ApplyedJobs.objects.get(candidate = candidate, job=job)
             job_name = applied_job.job.title
             receiver = applied_job.candidate.user
 
@@ -911,15 +758,7 @@ class GetQuestions(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, job_id):
-        """Handle GET request to retrieve job questions.
-
-        Args:
-            request: HTTP request object.
-            job_id (int): ID of the job.
-
-        Returns:
-            Response: JSON response with question data or error status.
-        """
+        
         try:
             questions = Question.objects.filter(job=job_id)
             serializer = QuestionSerializer(questions, many=True)
@@ -935,15 +774,7 @@ class Applyjob(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, job_id):
-        """Handle POST request to apply for a job.
-
-        Args:
-            request: HTTP request object with job data and answers.
-            job_id (int): ID of the job to apply for.
-
-        Returns:
-            Response: JSON response with success message or error details.
-        """
+        
         user = request.user
         try:
             job = Jobs.objects.get(id=job_id)
@@ -1092,5 +923,122 @@ def check_application(request, job_id):
     return Response({"has_applied": has_applied})
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+def csrf_token_view(request):
+    """Return the CSRF token for the request.
+
+    Args:
+        request: HTTP request object.
+
+    Returns:
+        JsonResponse: Response containing the CSRF token.
+    """
+    token = get_token(request)
+    return JsonResponse({'csrfToken': token})
 
 

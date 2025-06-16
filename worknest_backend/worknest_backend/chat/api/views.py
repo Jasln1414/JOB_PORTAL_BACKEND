@@ -19,12 +19,9 @@ from chat.api.serializer import ChatMessageSerializer, ChatRoomSerializer
 
 
 class ChatMessagesAPIView(APIView):
-    """View to retrieve and manage chat messages between a candidate and employer.
+    """View to retrieve and manage chat messages between a candidate and employer."""
 
-    This view allows authenticated users to fetch chat messages from a specific
-    chat room and mark messages as read.
-    """
-
+   
     permission_classes = [IsAuthenticated]
 
     def get(self, request, candidate_id, employer_id):

@@ -1,16 +1,10 @@
-"""Module for handling subscription-related views in the subscription app.
 
-This module provides API endpoints for managing subscription plans, creating
-subscriptions, and verifying payments using Razorpay. It includes authentication
-and admin-only restrictions where applicable.
-"""
 
 
 import uuid
 from django.conf import settings
-from django.http import JsonResponse
 
-import json
+
 import razorpay
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -45,27 +39,12 @@ logger = logging.getLogger(__name__)
 
 
 class SubscriptionPlansList(APIView):
-    """View to list all available subscription plans.
-
-    This view is accessible to authenticated users and returns a list of
-    subscription plans with their details (id, name, description, price,
-    job_limit).
-    """
+    
 
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        """Handle GET request to retrieve all subscription plans.
-
-        Args:
-            request: HTTP request object.
-
-        Returns:
-            Response: JSON response with list of plans or error message.
-
-        Raises:
-            Exception: If an unexpected error occurs while fetching plans.
-        """
+        
         try:
             plans = SubscriptionPlan.objects.all()
             data = [
@@ -85,15 +64,6 @@ class SubscriptionPlansList(APIView):
             )
 
 
-
-
-
-
-
-
-
-
-razorpay_client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
 
 class CreateSubscription(APIView):
     permission_classes = [IsAuthenticated]
@@ -147,12 +117,14 @@ class CreateSubscription(APIView):
                 status='pending',
             )
             subscription = EmployerSubscription.objects.create(
+                start_date=timezone.now(), 
                 employer=employer,
                 plan=plan,
                 end_date=timezone.now() + timedelta(days=plan.duration),
                 razorpay_subscription_id=f"sub_{uuid.uuid4().hex[:14]}",
                 payment=payment,
-                status='pending'
+                status='pending',
+                job_limit=plan.job_limit
             )
 
             return Response(
@@ -255,17 +227,7 @@ class CreateSubscriptionPlan(APIView):
     permission_classes = [IsAdminUser]
 
     def post(self, request):
-        """Handle POST request to create a new subscription plan.
-
-        Args:
-            request: HTTP request object containing plan data.
-
-        Returns:
-            Response: JSON response with created plan data or validation errors.
-
-        Raises:
-            Exception: If an unexpected error occurs during validation or saving.
-        """
+        
         logger.debug(f"Received subscription plan creation request: {request.data}")
         serializer = SubscriptionPlanSerializer(data=request.data)
         if serializer.is_valid():
@@ -282,68 +244,84 @@ class RenewSubscription(APIView):
     def post(self, request):
         user = request.user
         sub_id = request.data.get('sub_id')
+        reset_jobs = request.data.get('reset_jobs', False)  
+
         if not sub_id:
             logger.error("No sub_id provided in renewal request")
             return Response({'message': 'Subscription ID required'}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            employer = Employer.objects.get(user=user)
-            subscription = EmployerSubscription.objects.get(
-                razorpay_subscription_id=sub_id, employer=employer
-            )
-            plan = subscription.plan
-
-            if subscription.status == 'active' and subscription.end_date > timezone.now():
-                # Extend the existing subscription
-                subscription.end_date = subscription.end_date + timedelta(days=plan.duration)
-                subscription.status = 'pending'  # Set to pending until payment is verified
-                subscription.subscribed_job = 0  # Reset subscribed_job for the new cycle
-                subscription.save()
-            else:
-                # Create a new subscription if expired
-                subscription = EmployerSubscription.objects.create(
-                    employer=employer,
-                    plan=plan,
-                    razorpay_subscription_id=f"sub_{uuid.uuid4().hex[:14]}",
-                    status='pending',
-                    start_date=timezone.now(),
-                    end_date=timezone.now() + timedelta(days=plan.duration),
-                    subscribed_job=0,  # Initialize subscribed_job to 0
-                    job_limit=plan.job_limit,  # Set job_limit from plan
+            with transaction.atomic():
+                employer = Employer.objects.get(user=user)
+                subscription = EmployerSubscription.objects.get(
+                    razorpay_subscription_id=sub_id, employer=employer
                 )
+                plan = subscription.plan
 
-            order_amount = int(plan.price * 100)
-            order_data = {
-                'amount': order_amount,
-                'currency': 'INR',
-                'receipt': f'order_rcpt_{employer.id}_{plan.id}',
-                'notes': {'plan_id': str(plan.id), 'employer_id': str(employer.id)}
-            }
-            razorpay_client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
-            razorpay_order = razorpay_client.order.create(data=order_data)
-            order_id = razorpay_order['id']
+                # Check if subscription is restricted
+                if subscription.status == 'restricted':
+                    logger.warning(f"Cannot renew restricted subscription {sub_id} for employer {employer.id}")
+                    return Response(
+                        {'message': 'Subscription is restricted due to exceeding job limit. Resolve before renewing.'},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
 
-            payment = Payment.objects.create(
-                user=user,
-                employer=employer,
-                amount=plan.price,
-                method='Razorpay',
-                transaction_id=order_id,
-                status='pending',
-            )
-            subscription.payment = payment
-            subscription.save()
+                if subscription.status == 'active' and subscription.end_date > timezone.now():
+                    # Extend the existing subscription
+                    subscription.end_date = subscription.end_date + timedelta(days=plan.duration)
+                    subscription.status = 'pending'  # Set to pending until payment is verified
+                    if reset_jobs:
+                        subscription.subscribed_job = 0  # Reset only if requested
+                    subscription.job_limit = plan.job_limit  # Update job_limit
+                    subscription.save()
+                    logger.info(f"Extended subscription {sub_id} for employer {employer.id}, reset_jobs={reset_jobs}")
+                else:
+                    # Create a new subscription if expired
+                    subscription = EmployerSubscription.objects.create(
+                        employer=employer,
+                        plan=plan,
+                        razorpay_subscription_id=f"sub_{uuid.uuid4().hex[:14]}",
+                        status='pending',
+                        start_date=timezone.now(),
+                        end_date=timezone.now() + timedelta(days=plan.duration),
+                        subscribed_job=0,  
+                        job_limit=plan.job_limit
+                    )
+                    logger.info(f"Created new subscription {subscription.razorpay_subscription_id} for employer {employer.id}")
 
-            logger.info(f"Renewal order created: order_id={order_id}, sub_id={subscription.razorpay_subscription_id}")
-            return Response({
-                'message': 'Order created. Please complete payment.',
-                'order_id': order_id,
-                'amount': order_amount,
-                'key_id': settings.RAZORPAY_KEY_ID,
-                'planId': plan.id,
-                'subscription_id': subscription.razorpay_subscription_id,
-                'subscription_type': 'extension'
-            }, status=status.HTTP_201_CREATED)
+                order_amount = int(plan.price * 100)
+                order_data = {
+                    'amount': order_amount,
+                    'currency': 'INR',
+                    'receipt': f'order_rcpt_{employer.id}_{plan.id}',
+                    'notes': {'plan_id': str(plan.id), 'employer_id': str(employer.id)}
+                }
+                razorpay_client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
+                razorpay_order = razorpay_client.order.create(data=order_data)
+                order_id = razorpay_order['id']
+
+                payment = Payment.objects.create(
+                    user=user,
+                    employer=employer,
+                    amount=plan.price,
+                    method='Razorpay',
+                    transaction_id=order_id,
+                    status='pending',
+                )
+                subscription.payment = payment
+                subscription.save()
+
+                logger.info(f"Renewal order created: order_id={order_id}, sub_id={subscription.razorpay_subscription_id}")
+                return Response({
+                    'message': 'Order created. Please complete payment.',
+                    'order_id': order_id,
+                    'amount': order_amount,
+                    'key_id': settings.RAZORPAY_KEY_ID,
+                    'planId': plan.id,
+                    'subscription_id': subscription.razorpay_subscription_id,
+                    'subscription_type': 'extension' if reset_jobs else 'new'
+                }, status=status.HTTP_201_CREATED)
+
         except Employer.DoesNotExist:
             logger.error(f"Employer not found for user {user.id}")
             return Response({'message': 'Employer not found'}, status=status.HTTP_404_NOT_FOUND)

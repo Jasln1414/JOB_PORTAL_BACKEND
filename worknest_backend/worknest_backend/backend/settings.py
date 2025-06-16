@@ -14,11 +14,17 @@ https://docs.djangoproject.com/en/5.1/ref/settings/
 
 from pathlib import Path
 from datetime import timedelta
-from decouple import config
+
 import cloudinary # type: ignore
-import cloudinary.uploader # type: ignore
-import cloudinary.api # type: ignore
-import cloudinary_storage  # type: ignore
+# settings.py
+import cloudinary
+import cloudinary.uploader
+import cloudinary.api
+from decouple import config
+
+
+
+
 import os
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -49,6 +55,7 @@ CELERY = {
 INSTALLED_APPS = [
     "daphne",
     "django_celery_beat",
+    'django_celery_results',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -61,7 +68,7 @@ INSTALLED_APPS = [
     'rest_framework_simplejwt',
     'rest_framework_simplejwt.token_blacklist',
     'corsheaders',
-    'django_celery_results',
+    
     'user_account',
     'Empjob',
     'channels',
@@ -75,18 +82,12 @@ INSTALLED_APPS = [
     'Dashbord',
     'Interview',
     'django_extensions',
+    
 ]
+ACCOUNT_USERNAME_REQUIRED = True  
+ACCOUNT_EMAIL_REQUIRED = True   
 
 
-
-
-
-
-
-
-
-# For periodic tasks from the database
-#CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers.DatabaseScheduler'
 
 
 CSRF_TRUSTED_ORIGINS = ['http://127.0.0.1:8000']
@@ -123,12 +124,12 @@ CSRF_COOKIE_SAMESITE = 'Lax'
 SESSION_COOKIE_SAMESITE = 'Lax'
 CSRF_COOKIE_HTTPONLY = False
 
-# Cloudinary
 CLOUDINARY_STORAGE = {
-    'CLOUD_NAME': 'dsrhxem9l',
-    'API_KEY': '125148292953589',
-    'API_SECRET': '-WpnI2dfTrODpDQBYhfdscVEED8',
+    'CLOUD_NAME': config('CLOUD_NAME'),
+    'API_KEY': config('CLOUD_API_KEY'),
+    'API_SECRET': config('CLOUD_API_SECRET'),
 }
+
 
 cloudinary.config(
     cloud_name=CLOUDINARY_STORAGE['CLOUD_NAME'],
@@ -220,6 +221,7 @@ REST_FRAMEWORK = {
         'rest_framework.authentication.TokenAuthentication',
         'rest_framework_simplejwt.authentication.JWTAuthentication',
         'rest_framework.authentication.BasicAuthentication',
+         
     ],
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
@@ -229,13 +231,18 @@ REST_FRAMEWORK = {
     'DEFAULT_FILTER_BACKENDS': [
         'django_filters.rest_framework.DjangoFilterBackend',
     ],
+    
+    'DEFAULT_FILTER_BACKENDS': ['django_filters.rest_framework.DjangoFilterBackend'],
+
+
 }
 
 # JWT settings
 SIMPLE_JWT = {
     'LEEWAY': 10,
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=60),
-    "REFRESH_TOKEN_LIFETIME": timedelta(days=30),
+    
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
     'JWT_VERIFY_EXPIRATION': True,
     'JWT_AUTH_HEADER_PREFIX': 'Bearer',
     "ROTATE_REFRESH_TOKENS": True,
@@ -270,7 +277,7 @@ SIMPLE_JWT = {
 
 # settings.py
 LANGUAGE_CODE = 'en-us'
-TIME_ZONE = 'America/New_York'  # Set to New York time
+TIME_ZONE = 'America/New_York'  
 USE_I18N = True
 USE_TZ = True
 # Static files
@@ -285,8 +292,9 @@ STATICFILES_DIRS = [
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 
-RAZORPAY_KEY_ID = 'rzp_test_mbBRJooIj2vCOA'
-RAZORPAY_KEY_SECRET = 'ETDX3cJVDZ41ivU4TTAZ86vO'
+RAZORPAY_KEY_ID = config('RAZORPAY_KEY_ID')
+RAZORPAY_KEY_SECRET = config('RAZORPAY_KEY_SECRET')
+
 
 DATA_UPLOAD_MAX_MEMORY_SIZE = 5242880
 FILE_UPLOAD_MAX_MEMORY_SIZE = 5242880
@@ -314,6 +322,11 @@ AUTHENTICATION_BACKENDS = [
     'django.contrib.auth.backends.ModelBackend',
 ]
 
+
+GOOGLE_CLIENT_ID = config('GOOGLE_CLIENT_ID')
+
+
+
 CSRF_COOKIE_SECURE = True
 CSRF_COOKIE_SAMESITE = 'Lax'
 CSRF_COOKIE_HTTPONLY = False
@@ -321,12 +334,10 @@ CSRF_USE_SESSIONS = False
 CSRF_COOKIE_SECURE = False
 
 
-# CELERY_BEAT_SCHEDULE = {
-#     'update-interview-statuses': {
-#         'task': 'Interview.tasks.update_interview_statuses',
-#         'schedule': 60.0,  # Run every minute
-#     },
-# }
+# makes Django Admin show local time 
+from django.utils.timezone import activate
+activate('America/New_York')
+
 
 
 
@@ -349,8 +360,16 @@ CACHES = {
         }
     }
 }
+
+
+
+ACCOUNT_AUTHENTICATION_METHOD = 'username_email'
+
 # Celery Configuration Options with Redis
 CELERY_BROKER_URL = 'redis://localhost:6379/0'
 CELERY_RESULT_BACKEND = 'redis://localhost:6379/0'
 SESSION_ENGINE = "django.contrib.sessions.backends.cache"
 SESSION_CACHE_ALIAS = "default"
+
+
+

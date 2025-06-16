@@ -16,7 +16,7 @@ def send_otp_via_mail(email, otp=None):
     # Only generate a random OTP if one wasn't provided
     if otp is None:
         otp = random.randint(1000, 9999)
-        print(f"Generated OTP: {otp} for {email}")
+        # print(f"Generated OTP: {otp} for {email}")
     message = f'Your OTP is {otp}'
     email_from = settings.EMAIL_HOST_USER
     

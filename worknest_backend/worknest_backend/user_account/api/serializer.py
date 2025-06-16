@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from user_account.models import User,Education,Candidate,Employer
 from django.contrib.auth.hashers import make_password
-from .email import  *
+from .utiliti_mail import  *
 
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
@@ -34,7 +34,7 @@ class EmployerSerializer(serializers.ModelSerializer):
         fields = [
             'profile_pic', 'user_id', 'user_email', 'phone', 'id', 'industry',
             'user_full_name', 'headquarters', 'address', 'about', 'website_link',
-            'completed', 'is_verified', 'is_approved_by_admin'  # Add missing fields
+            'completed', 'is_verified', 'is_approved_by_admin'  
         ]
     
     def get_profile_pic(self, obj):
@@ -59,11 +59,7 @@ class CandidateRegisterSerializer(serializers.ModelSerializer):
             instance.user_type = "candidate"
             instance.save()  # Save the user first
             
-            # Now send the OTP after the user is saved
-            try:
-                send_otp_via_mail(instance.email)
-            except Exception as e:
-                logger.error(f"Error sending OTP during registration: {e}")
+           
                 
             return instance
 class EmployerRegisterSerializer(serializers.ModelSerializer):
@@ -80,11 +76,7 @@ class EmployerRegisterSerializer(serializers.ModelSerializer):
             instance.user_type = "employer"
             instance.save()  # Save the user first
             
-            # Now send the OTP after the user is saved
-            try:
-                send_otp_via_mail(instance.email)
-            except Exception as e:
-                logger.error(f"Error sending OTP during registration: {e}")
+           
                 
             return instance
         
@@ -118,7 +110,7 @@ class CandidateProfileSerializer(serializers.ModelSerializer):
 class EmployerProfileSerializer(serializers.ModelSerializer):
     class Meta:
         model = Employer
-        exclude = ('user',)  # Include completed
+        exclude = ('user',)  
     
     def update(self, instance, validated_data):
         for attr, value in validated_data.items():

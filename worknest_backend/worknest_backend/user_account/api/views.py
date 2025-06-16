@@ -2,23 +2,32 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.exceptions import ParseError
+
+from user_account.api.utiliti_mail import resend_otp_via_mail, send_otp_via_mail
 from .serializer import *
-from .email import *
+from .utiliti_mail import *
+
 from Empjob.api.serializer import *
 from user_account.models import *
 from Empjob.models import *
 from django.contrib.auth import authenticate
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework.permissions import IsAuthenticated, AllowAny
-from google.oauth2 import id_token  # type: ignore
-from google.auth.transport import requests  # type: ignore
+from google.oauth2 import id_token # type: ignore
+from google.auth.transport import requests # type: ignore
+
 from django.views.decorators.csrf import csrf_exempt
-from django.utils.decorators import method_decorator
 from django.core.exceptions import ValidationError
 from django.middleware.csrf import get_token
+from rest_framework import status
+
+from rest_framework.permissions import IsAuthenticated
+from django.utils.decorators import method_decorator
+
 from django.http import JsonResponse
 import logging
 import os
+
 
 logger = logging.getLogger(__name__)
 
@@ -35,15 +44,7 @@ class EmployerRegisterView(APIView):
     permission_classes = []
 
     def post(self, request):
-        """
-        Register a new employer and send an OTP for email verification.
-
-        Args:
-            request: HTTP request with employer registration data (e.g., email).
-
-        Returns:
-            Response: Success message with email or error details.
-        """
+       
         email = request.data.get('email')
 
         # Check if user already exists
@@ -129,8 +130,8 @@ class EmpLoginView(APIView):
 
             # Get serialized employer data
             employer_data = EmployerSerializer(employer, context={'request': request}).data
-
-            # Prepare response data without 'company_name'
+          
+            
             response_data = {
                 "access_token": access_token,
                 "refresh_token": refresh_token,
@@ -138,9 +139,9 @@ class EmpLoginView(APIView):
                     "id": employer.id,
                     "user_id": user.id,
                     "email": user.email,
-                    "completed": employer.completed,  # This controls navigation
+                    "completed": employer.completed,  
                     "profile_pic": employer_data.get('profile_pic'),
-                    # Removed "company_name": employer.company_name
+                   
                     "is_verified": employer.is_verified,
                     "is_approved": employer.is_approved_by_admin
                 }
@@ -157,15 +158,8 @@ class EmpLoginView(APIView):
 class CurrentUser(APIView):
     """Retrieve details of the currently authenticated user."""
     def get(self, request):
-        """
-        Fetch details of the authenticated user (candidate or employer).
-
-        Args:
-            request: HTTP request with authenticated user.
-
-        Returns:
-            Response: Serialized candidate/employer data or error message.
-        """
+       
+       
         user = request.user
         if not user.is_authenticated:
             return Response({"error": "User is not authenticated"}, status=status.HTTP_401_UNAUTHORIZED)
@@ -186,37 +180,14 @@ class CurrentUser(APIView):
 
         return Response({"error": "User is not a candidate or an employer"}, status=status.HTTP_404_NOT_FOUND)
 
-from rest_framework.views import APIView
-from rest_framework.response import Response
-from rest_framework import status
-from rest_framework.permissions import IsAuthenticated
-from django.views.decorators.csrf import csrf_exempt
-from django.utils.decorators import method_decorator
-import os
-import logging
 
-logger = logging.getLogger(__name__)
-
-from rest_framework.views import APIView
-from rest_framework.response import Response
-from rest_framework import status
-from rest_framework.permissions import IsAuthenticated
-from django.views.decorators.csrf import csrf_exempt
-from django.utils.decorators import method_decorator
-import os
-import logging
-
-logger = logging.getLogger(__name__)
 
 @method_decorator(csrf_exempt, name='dispatch')
 class EmployerProfileUpdateView(APIView):
     permission_classes = [IsAuthenticated]
 
     def put(self, request):
-        logger.info(f"PUT /api/account/employer/profile/update/ received from user: {request.user.email if request.user.is_authenticated else 'Anonymous'}")
-        logger.info(f"Headers: {dict(request.headers)}")
-        logger.info(f"Data: {request.data}")
-        logger.info(f"Files: {request.FILES}")
+       
 
         if not request.user.is_authenticated:
             logger.error("Unauthorized access attempt")
@@ -267,91 +238,32 @@ class EmployerProfileUpdateView(APIView):
             return Response({"status": "error", "message": str(e)},
                             status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+
+
+
+
 from django.db import transaction
 
 logger = logging.getLogger(__name__)
-
-
-
-
-
-
-logger = logging.getLogger(__name__)
-
-class EmployerProfileCreateView(APIView):
-    """Handle complete employer profile creation and updates"""
+class EmployerProfileCreatView(APIView):
     permission_classes = [IsAuthenticated]
-
-    @transaction.atomic
-    def post(self, request):
-        """
-        Complete or update employer profile
-        POST /api/employer/profile/
-        {
-            "phone": "+1234567890",
-            "website": "httpsAzN3w",
-            "industry": "Tech",
-            "about": "We are a tech company",
-            ...
-        }
-        """
+    def post(self,request):
         user = request.user
-        logger.info(f"Profile update initiated for user: {user.email}")
-
-        try:
-            # Get or create employer profile with row lock
-            employer = Employer.objects.select_for_update().get(user=user)
-        except Employer.DoesNotExist:
-            logger.warning(f"No employer profile found for user: {user.id}")
-            return Response(
-                {"detail": "Employer profile not found"},
-                status=status.HTTP_404_NOT_FOUND
-            )
-
-        serializer = EmployerProfileSerializer(
-            employer,
-            data=request.data,
-            partial=True,
-            context={'request': request}
-        )
-
-        if not serializer.is_valid():
-            logger.warning(f"Validation errors: {serializer.errors}")
+        employer,created = Employer.objects.get_or_create(user=user)
+        serializer = EmployerProfileSerializer(employer,data=request.data, partial=True)
+        if serializer.is_valid():
+           
+            employer.is_verified=True 
+            employer.completed=True
+            serializer.save()
+            employer.save()
+           
+           
+            
+            return Response({"message": "Profile updated successfully.","data":serializer.data}, status=status.HTTP_200_OK)
+        else:
+            print(serializer.errors)
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-        try:
-            # Check profile completion requirements
-            required_fields = ['phone', 'website', 'industry', 'about']
-            missing_fields = [field for field in required_fields if not serializer.validated_data.get(field)]
-
-            if not missing_fields:
-                employer.completed = True
-                logger.info(f"Marking profile as complete for user: {user.email}")
-            else:
-                logger.info(f"Profile incomplete for user: {user.email}. Missing fields: {missing_fields}")
-
-            with transaction.atomic():
-                serializer.save()
-                # Explicitly save completed status
-                employer.completed = employer.completed  # Ensure it's set
-                employer.save(update_fields=['completed'])
-                logger.info(f"Profile updated for user: {user.email}, completed: {employer.completed}")
-
-                return Response({
-                    "status": "complete" if employer.completed else "incomplete",
-                    "data": serializer.data,
-                    "completed": employer.completed,  # Explicitly include completed
-                    "message": "Profile successfully updated"
-                }, status=status.HTTP_200_OK)
-
-        except Exception as e:
-            logger.error(f"Profile update failed for user: {user.email}: {str(e)}")
-            return Response(
-                {"detail": "Error updating profile"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-
-
 # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! CANDIDATE !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 class ProfileUpdateView(APIView):
@@ -359,15 +271,7 @@ class ProfileUpdateView(APIView):
     permission_classes = [IsAuthenticated]
 
     def put(self, request):
-        """
-        Update candidate profile, including profile picture, resume, and education.
-
-        Args:
-            request: HTTP request with profile data and optional files.
-
-        Returns:
-            Response: Success message or error details.
-        """
+       
         try:
             user = request.user
             profile = Candidate.objects.get(user=user)
@@ -429,15 +333,8 @@ class UserDetails(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        """
-        Fetch user details with additional candidate/employer data if applicable.
 
-        Args:
-            request: HTTP request with authenticated user.
-
-        Returns:
-            Response: User data with optional candidate/employer details.
-        """
+       
         user = User.objects.get(id=request.user.id)
         data = UserSerializer(user).data
         if user.user_type == 'candidate':
@@ -459,15 +356,7 @@ class CandidateRegisterView(APIView):
     permission_classes = []
 
     def post(self, request):
-        """
-        Register a new candidate and send an OTP for email verification.
-
-        Args:
-            request: HTTP request with candidate registration data (e.g., email).
-
-        Returns:
-            Response: Success message with email or error details.
-        """
+       
         email = request.data.get('email')
         if User.objects.filter(email=email).exists():
             return Response({"message": "User with this email is already exist"},
@@ -495,15 +384,7 @@ class CandidateLoginView(APIView):
     permission_classes = []
 
     def post(self, request):
-        """
-        Authenticate a candidate and return access/refresh tokens.
-
-        Args:
-            request: HTTP request with email and password.
-
-        Returns:
-            Response: Candidate details with tokens or error message.
-        """
+        
         email = request.data.get('email')
         password = request.data.get('password')
 
@@ -549,25 +430,20 @@ class CandidateLoginView(APIView):
 
 
 
-logger = logging.getLogger(__name__)
 
-User = get_user_model()
+
+
+
+
+
+
 
 class AuthEmployerView(APIView):
     """Handle employer authentication via Google OAuth."""
     permission_classes = [AllowAny]
 
     def post(self, request):
-        """
-        Authenticate an employer using Google OAuth and return tokens.
-
-        Args:
-            request: HTTP request with Google credential or client_id.
-
-        Returns:
-            Response: Employer details with tokens or error message.
-        """
-        GOOGLE_CLIENT_ID = "718921547648-htg9q59o6ka7j7jsp45cc4dai6olfqs5.apps.googleusercontent.com"
+        GOOGLE_AUTH_API = settings.GOOGLE_CLIENT_ID
         credential = request.data.get('credential') or request.data.get('client_id')
 
         logger.debug(f"Received data: {request.data}")
@@ -579,10 +455,11 @@ class AuthEmployerView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        # Verify the Google OAuth token
         try:
             google_request = requests.Request()
             user_info = id_token.verify_oauth2_token(
-                credential, google_request, GOOGLE_CLIENT_ID
+                credential, google_request,  GOOGLE_AUTH_API 
             )
             email = user_info.get('email')
             if not email:
@@ -604,6 +481,7 @@ class AuthEmployerView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+        # Get or create user
         try:
             user, created = User.objects.get_or_create(
                 email=email,
@@ -614,14 +492,8 @@ class AuthEmployerView(APIView):
                     'is_email_verified': True,
                 }
             )
-
             if created:
-                profile_picture = user_info.get('picture', '')
-                Employer.objects.create(
-                    user=user,
-                    profile_pic=profile_picture,
-                    completed=False
-                )
+                logger.info(f"Created new user: {email}")
         except Exception as e:
             logger.error(f"User creation/retrieval failed: {e}")
             return Response(
@@ -640,27 +512,36 @@ class AuthEmployerView(APIView):
                 status=status.HTTP_403_FORBIDDEN
             )
 
+        # Get or create Employer profile
         try:
             employer = Employer.objects.get(user=user)
-            employer_data = EmployerSerializer(employer).data
-
-            if not employer.is_approved_by_admin:
-                return Response(
-                    {"message": "Your account is not yet approved by the admin."},
-                    status=status.HTTP_403_FORBIDDEN
-                )
+            logger.info(f"Found existing Employer for user {email}")
         except Employer.DoesNotExist:
-            logger.error(f"Employer not found for user - {user.email}")
+            profile_picture = user_info.get('picture', '')
+            employer = Employer.objects.create(
+                user=user,
+                profile_pic=profile_picture,
+                completed=False
+            )
+            logger.info(f"Created missing Employer profile for user {email}")
+
+        # Serialize employer data
+        employer_data = EmployerSerializer(employer).data
+
+        # Check admin approval
+        if not employer.is_approved_by_admin:
             return Response(
-                {"message": "Employer not found"},
-                status=status.HTTP_404_NOT_FOUND
+                {"message": "Your account is not yet approved by the admin."},
+                status=status.HTTP_403_FORBIDDEN
             )
 
+        # Create JWT tokens
         refresh = RefreshToken.for_user(user)
         refresh["name"] = str(user.full_name)
         access_token = str(refresh.access_token)
         refresh_token = str(refresh)
 
+        # Prepare response data
         content = {
             'email': user.email,
             'user_id': user.id,
@@ -672,28 +553,25 @@ class AuthEmployerView(APIView):
             'user_data': {
                 'id': employer.id,
                 'completed': employer.completed,
-                'profile_pic': employer_data.get('profile_pic'),
+                'profile_pic': employer_data.get('profile_pic'),  
                 'phone': employer_data.get('phone'),
                 'isAdmin': employer_data.get('isAdmin', False),
             },
         }
+
         logger.debug(f"Auth response for {user.email}: {content}")
         return Response(content, status=status.HTTP_200_OK)
+
+
+
+
 class AuthCandidateView(APIView):
     """Handle candidate authentication via Google OAuth."""
     permission_classes = [AllowAny]
 
     def post(self, request):
-        """
-        Authenticate a candidate using Google OAuth and return tokens.
-
-        Args:
-            request: HTTP request with Google client_id.
-
-        Returns:
-            Response: Candidate details with tokens or error message.
-        """
-        GOOGLE_AUTH_API = "718921547648-htg9q59o6ka7j7jsp45cc4dai6olfqs5.apps.googleusercontent.com"
+        
+        GOOGLE_AUTH_API = settings.GOOGLE_CLIENT_ID
         email = None
         try:
             google_request = requests.Request()
@@ -751,15 +629,7 @@ class CandidateProfileCreation(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request):
-        """
-        Create or update candidate profile with education details.
 
-        Args:
-            request: HTTP request with profile and education data.
-
-        Returns:
-            Response: Success message with serialized data or error details.
-        """
         user = request.user
         candidate, created = Candidate.objects.get_or_create(user=user)
 
@@ -790,15 +660,7 @@ class ForgotPassView(APIView):
     permission_classes = []
 
     def post(self, request):
-        """
-        Send an OTP to the user's email for password reset.
-
-        Args:
-            request: HTTP request with email.
-
-        Returns:
-            Response: Success message with email or error details.
-        """
+       
         email = request.data.get('email')
         if not email:
             return Response({"message": "Email is required."}, status=status.HTTP_400_BAD_REQUEST)
@@ -829,15 +691,7 @@ class ResetPassword(APIView):
     permission_classes = []
 
     def post(self, request):
-        """
-        Reset the user's password after OTP verification.
-
-        Args:
-            request: HTTP request with email and new password.
-
-        Returns:
-            Response: Success message or error details.
-        """
+       
         email = request.data.get('email')
         password = request.data.get('password')
 
@@ -862,15 +716,7 @@ class OtpVarificationView(APIView):
     permission_classes = []
 
     def post(self, request):
-        """
-        Verify the OTP and activate the user account.
-
-        Args:
-            request: HTTP request with email and OTP.
-
-        Returns:
-            Response: Success message with email or error details.
-        """
+       
         serializer = OtpVerificationSerializer(data=request.data)
         if not serializer.is_valid():
             logger.warning(f"Invalid OTP verification request: {serializer.errors}")
@@ -904,15 +750,7 @@ class ResendOtpView(APIView):
     permission_classes = []
 
     def post(self, request):
-        """
-        Resend OTP to the user's email.
-
-        Args:
-            request: HTTP request with email.
-
-        Returns:
-            Response: Success message with email or error details.
-        """
+       
         email = request.data.get('email')
         if not email:
             return Response({"error": "Email is required."}, status=status.HTTP_400_BAD_REQUEST)
@@ -930,15 +768,7 @@ class AdminLoginView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request):
-        """
-        Authenticate an admin and return access/refresh tokens.
-
-        Args:
-            request: HTTP request with email and password.
-
-        Returns:
-            Response: Admin details with tokens or error message.
-        """
+       
         try:
             email = request.data.get('email')
             password = request.data.get('password')
@@ -970,5 +800,6 @@ class AdminLoginView(APIView):
             'refresh_token': refresh_token,
             'isAdmin': user.is_superuser,
             'user_type': user.user_type,
+            
         }
         return Response(content, status=status.HTTP_200_OK)
